@@ -29,7 +29,8 @@ export interface RFxDetailsViewModel {
  * spec entries diverge from the current product master.
  */
 export function getRfxDetails(rfxId: string): RFxDetailsViewModel | undefined {
-  if (corrugatedSeed.rfx.id !== rfxId) return undefined;
+  const rfxRecord = corrugatedSeed.rfxList.find((candidate) => candidate.id === rfxId);
+  if (!rfxRecord) return undefined;
 
   const productsById = new Map(corrugatedSeed.products.map((product) => [product.id, product]));
   const unitsById = new Map(corrugatedSeed.units.map((unit) => [unit.id, unit]));
@@ -62,5 +63,5 @@ export function getRfxDetails(rfxId: string): RFxDetailsViewModel | undefined {
     new Set(lines.map((l) => l.requiredUnit?.symbol ?? "unresolved unit")),
   );
 
-  return { rfx: corrugatedSeed.rfx, lines, totalRequestedQuantity, requiredUnitSymbols };
+  return { rfx: rfxRecord, lines, totalRequestedQuantity, requiredUnitSymbols };
 }

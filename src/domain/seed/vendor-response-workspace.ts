@@ -60,7 +60,7 @@ export interface VendorResponseViewModel {
  */
 export function getVendorResponseWorkspace(rfxId: string): VendorResponseViewModel[] {
   const seed = corrugatedSeed;
-  if (seed.rfx.id !== rfxId) return [];
+  if (!seed.rfxList.some((candidate) => candidate.id === rfxId)) return [];
 
   const vendorsById = new Map(seed.vendors.map((v) => [v.id, v]));
   const productsById = new Map(seed.products.map((p) => [p.id, p]));

@@ -1,284 +1,218 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import type { RFxStatus } from "@/domain/types";
 import { getRfxDetails } from "@/domain/seed/rfx-details";
+import { getVendorResponseWorkspace } from "@/domain/seed/vendor-response-workspace";
+import { getComparison } from "./comparison/view-model";
+import { corrugatedSeed } from "@/domain/seed/corrugated-seed";
+import { Badge } from "@/components/ui/badge";
+import { EmptyState } from "@/components/ui/empty-state";
 
-const STATUS_LABEL: Record<RFxStatus, string> = {
-  draft: "Draft",
-  sent: "Sent",
-  responses_in_progress: "Responses in progress",
-  under_comparison: "Under comparison",
-  awarded: "Awarded",
-  closed: "Closed",
-};
-
-const STATUS_STYLE: Record<RFxStatus, string> = {
-  draft: "bg-slate-100 text-slate-700 ring-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-600",
-  sent: "bg-blue-50 text-blue-700 ring-blue-300 dark:bg-blue-950 dark:text-blue-300 dark:ring-blue-800",
-  responses_in_progress:
-    "bg-amber-50 text-amber-800 ring-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-800",
-  under_comparison:
-    "bg-indigo-50 text-indigo-700 ring-indigo-300 dark:bg-indigo-950 dark:text-indigo-300 dark:ring-indigo-800",
-  awarded:
-    "bg-emerald-50 text-emerald-700 ring-emerald-300 dark:bg-emerald-950 dark:text-emerald-300 dark:ring-emerald-800",
-  closed: "bg-slate-100 text-slate-500 ring-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-600",
-};
-
-const CREATED_VIA_LABEL: Record<string, string> = {
-  manual: "Manual",
-  import: "Import",
-  ai_suggested: "AI Suggested",
-};
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-US", {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+function formatDateTime(iso: string) {
+  return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-export default async function RFxDetailsPage({
-  params,
-}: {
-  params: Promise<{ rfxId: string }>;
-}) {
+export default async function RfxOverviewPage({ params }: { params: Promise<{ rfxId: string }> }) {
   const { rfxId } = await params;
   const details = getRfxDetails(rfxId);
   if (!details) notFound();
 
-  const { rfx, lines, totalRequestedQuantity, requiredUnitSymbols } = details;
+  const responses = getVendorResponseWorkspace(rfxId);
+  const comparison = getComparison(rfxId);
+  const clarifications = corrugatedSeed.clarifications.filter((c) => c.rfxId === rfxId);
+  const openClarifications = clarifications.filter((c) => c.status !== "answered");
+  const needsValidationLines = comparison
+    ? comparison.rows.filter((row) => row.cells.some((c) => c.state === "needs_validation" || c.state === "blocked" || c.state === "non_compliant")).length
+    : 0;
 
-  const technicalLines = lines.filter((l) => l.line.technicalRequirements);
-  const deliveryLines = lines.filter((l) => l.line.deliveryRequirements);
+  const technicalRequirements = Array.from(
+    new Set(details.lines.map((l) => l.line.technicalRequirements).filter((v): v is string => Boolean(v))),
+  );
+  const deliveryRequirements = Array.from(
+    new Set(details.lines.map((l) => l.line.deliveryRequirements).filter((v): v is string => Boolean(v))),
+  );
+
+  const activity = [
+    ...responses.map((r) => ({ at: r.vendorResponse.receivedAt, text: `${r.vendor.name} submitted a response (${r.documents.length} document${r.documents.length === 1 ? "" : "s"})` })),
+  ].sort((a, b) => (a.at < b.at ? 1 : -1));
+
+  const nextAction = getNextAction({
+    rfxId,
+    responseCount: responses.length,
+    openClarifications: openClarifications.length,
+    blockedLines: comparison?.summary.blockedLines ?? 0,
+  });
 
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-8 dark:bg-slate-950 sm:px-6 lg:px-10">
-      <div className="mx-auto flex max-w-6xl flex-col gap-8">
-        {/* Header */}
-        <header className="flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                RFx Details
-              </p>
-              <h1 className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-50">{rfx.title}</h1>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">{rfx.category}</p>
-            </div>
-            <div className="flex flex-col items-start gap-2 sm:items-end">
-              <span
-                className={`inline-flex w-fit items-center rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset ${STATUS_STYLE[rfx.status]}`}
-              >
-                {STATUS_LABEL[rfx.status]}
-              </span>
-              <Link
-                href={`/rfx/${rfx.id}/responses`}
-                className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
-              >
-                View vendor responses →
-              </Link>
-            </div>
+    <div className="flex flex-col gap-6">
+      {/* Key metrics */}
+      <section className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+        <MetricTile label="Line items" value={String(details.lines.length)} />
+        <MetricTile label="Vendor responses" value={String(responses.length)} />
+        <MetricTile
+          label="Needs validation"
+          value={String(needsValidationLines)}
+          tone={needsValidationLines > 0 ? "amber" : "emerald"}
+        />
+        <MetricTile
+          label="Open clarifications"
+          value={String(openClarifications.length)}
+          tone={openClarifications.length > 0 ? "amber" : "emerald"}
+        />
+        <MetricTile label="Comparable lines" value={comparison ? `${comparison.summary.comparableLines}/${comparison.rows.length}` : "—"} />
+        <MetricTile label="Blocked lines" value={String(comparison?.summary.blockedLines ?? 0)} tone={(comparison?.summary.blockedLines ?? 0) > 0 ? "rose" : "emerald"} />
+      </section>
+
+      {/* Next action */}
+      {nextAction && (
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-5 py-4 dark:border-indigo-900 dark:bg-indigo-950">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700 dark:text-indigo-400">Next action</p>
+            <p className="mt-0.5 text-sm text-indigo-900 dark:text-indigo-200">{nextAction.text}</p>
           </div>
-          <dl className="grid grid-cols-2 gap-4 border-t border-slate-100 pt-4 text-sm dark:border-slate-800 sm:grid-cols-4">
-            <div>
-              <dt className="text-slate-500 dark:text-slate-400">Created via</dt>
-              <dd className="mt-0.5 font-medium text-slate-900 dark:text-slate-100">
-                {CREATED_VIA_LABEL[rfx.createdVia] ?? rfx.createdVia}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-slate-500 dark:text-slate-400">Created</dt>
-              <dd className="mt-0.5 font-medium text-slate-900 dark:text-slate-100">{formatDate(rfx.createdAt)}</dd>
-            </div>
-            <div>
-              <dt className="text-slate-500 dark:text-slate-400">Approved</dt>
-              <dd className="mt-0.5 font-medium text-slate-900 dark:text-slate-100">
-                {rfx.approvedAt ? formatDate(rfx.approvedAt) : "Not yet approved"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-slate-500 dark:text-slate-400">RFx ID</dt>
-              <dd className="mt-0.5 font-mono text-xs font-medium text-slate-900 dark:text-slate-100">{rfx.id}</dd>
-            </div>
-          </dl>
-        </header>
-
-        {/* Summary */}
-        <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <SummaryStat label="RFx lines" value={String(lines.length)} />
-          <SummaryStat label="Total requested quantity" value={totalRequestedQuantity.toLocaleString("en-US")} />
-          <SummaryStat label="Required comparison unit(s)" value={requiredUnitSymbols.join(", ")} />
-          <SummaryStat label="Lines with technical requirements" value={String(technicalLines.length)} />
+          <Link
+            href={nextAction.href}
+            className="inline-flex items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-indigo-500"
+          >
+            {nextAction.cta}
+          </Link>
         </section>
+      )}
 
-        {/* RFx lines table */}
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="border-b border-slate-100 px-6 py-4 dark:border-slate-800">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">RFx lines</h2>
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        {/* Requirements summary */}
+        <section className="flex flex-col gap-4 rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:col-span-2">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Key requirements</h2>
             <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-              Buyer&apos;s requested specification for each line, as snapshotted on this RFx. Highlighted entries
-              differ from the current product master.
+              A summary of what was asked. Full detail is on the Requirements tab.
             </p>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                  <th className="px-6 py-3 font-medium">Line</th>
-                  <th className="px-6 py-3 font-medium">Product</th>
-                  <th className="px-6 py-3 font-medium">Requested specification</th>
-                  <th className="px-6 py-3 font-medium">Quantity</th>
-                  <th className="px-6 py-3 font-medium">Required unit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map(({ line, product, requiredUnit, specEntries }) => (
-                  <tr
-                    key={line.id}
-                    className="border-b border-slate-100 last:border-0 dark:border-slate-800"
-                  >
-                    <td className="px-6 py-4 align-top font-medium text-slate-900 dark:text-slate-100">
-                      {line.lineNumber}
-                    </td>
-                    <td className="px-6 py-4 align-top text-slate-700 dark:text-slate-300">{product.name}</td>
-                    <td className="px-6 py-4 align-top">
-                      <div className="flex flex-wrap gap-1.5">
-                        {specEntries.map((entry) => (
-                          <span
-                            key={entry.key}
-                            title={
-                              entry.divergesFromProductMaster
-                                ? "Buyer-specific requirement for this RFx; not on the product master"
-                                : undefined
-                            }
-                            className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${
-                              entry.divergesFromProductMaster
-                                ? "bg-amber-50 text-amber-800 ring-amber-300 dark:bg-amber-950 dark:text-amber-300 dark:ring-amber-800"
-                                : "bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700"
-                            }`}
-                          >
-                            {entry.key}: {entry.value}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 align-top text-slate-700 dark:text-slate-300">
-                      {line.requestedQuantity.toLocaleString("en-US")}
-                    </td>
-                    <td className="px-6 py-4 align-top text-slate-700 dark:text-slate-300">
-                      {requiredUnit ? `${requiredUnit.name} (${requiredUnit.symbol})` : "Unresolved"}
-                    </td>
-                  </tr>
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Technical</h3>
+            {technicalRequirements.length === 0 ? (
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">No explicit technical requirements stated.</p>
+            ) : (
+              <ul className="mt-1.5 list-disc space-y-1 pl-4 text-sm text-slate-700 dark:text-slate-300">
+                {technicalRequirements.map((req) => (
+                  <li key={req}>{req}</li>
                 ))}
-              </tbody>
-            </table>
+              </ul>
+            )}
           </div>
+          <div>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Delivery</h3>
+            {deliveryRequirements.length === 0 ? (
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">No explicit delivery requirements stated.</p>
+            ) : (
+              <ul className="mt-1.5 list-disc space-y-1 pl-4 text-sm text-slate-700 dark:text-slate-300">
+                {deliveryRequirements.map((req) => (
+                  <li key={req}>{req}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <Link
+            href={`/rfx/${rfxId}/requirements`}
+            className="w-fit text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400"
+          >
+            View full requirements →
+          </Link>
         </section>
 
-        {/* Technical requirements */}
-        <RequirementSection
-          title="Technical requirements"
-          description="Line-level technical requirements the buyer has stated on this RFx."
-          entries={technicalLines.map(({ line, product }) => ({
-            id: line.id,
-            label: `Line ${line.lineNumber} — ${product.name}`,
-            value: line.technicalRequirements!,
-          }))}
-          emptyMessage="No lines on this RFx carry an explicit technical requirement."
-        />
-
-        {/* Commercial requirements */}
-        <section className="rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <div className="border-b border-slate-100 px-6 py-4 dark:border-slate-800">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Commercial requirements</h2>
-            <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
-              The quantity and comparison unit vendors must price against for each line.
-            </p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[520px] border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                  <th className="px-6 py-3 font-medium">Line</th>
-                  <th className="px-6 py-3 font-medium">Product</th>
-                  <th className="px-6 py-3 font-medium">Requested quantity</th>
-                  <th className="px-6 py-3 font-medium">Required pricing unit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map(({ line, product, requiredUnit }) => (
-                  <tr key={line.id} className="border-b border-slate-100 last:border-0 dark:border-slate-800">
-                    <td className="px-6 py-4 text-slate-900 dark:text-slate-100">{line.lineNumber}</td>
-                    <td className="px-6 py-4 text-slate-700 dark:text-slate-300">{product.name}</td>
-                    <td className="px-6 py-4 text-slate-700 dark:text-slate-300">
-                      {line.requestedQuantity.toLocaleString("en-US")}
-                    </td>
-                    <td className="px-6 py-4 text-slate-700 dark:text-slate-300">
-                      {requiredUnit ? `${requiredUnit.name} (${requiredUnit.symbol})` : "Unresolved"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        {/* Recent activity */}
+        <section className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Recent activity</h2>
+          {activity.length === 0 ? (
+            <EmptyState title="No activity yet" description="Vendor responses will appear here as they're submitted." />
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {activity.map((item, i) => (
+                <li key={i} className="text-sm">
+                  <p className="text-slate-800 dark:text-slate-200">{item.text}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">{formatDateTime(item.at)}</p>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
-
-        {/* Delivery / terms */}
-        <RequirementSection
-          title="Delivery / terms"
-          description="Line-level delivery requirements the buyer has stated on this RFx."
-          entries={deliveryLines.map(({ line, product }) => ({
-            id: line.id,
-            label: `Line ${line.lineNumber} — ${product.name}`,
-            value: line.deliveryRequirements!,
-          }))}
-          emptyMessage="No lines on this RFx carry an explicit delivery requirement."
-        />
       </div>
-    </main>
-  );
-}
 
-function SummaryStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
-      <p className="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-50">{value}</p>
-    </div>
-  );
-}
-
-function RequirementSection({
-  title,
-  description,
-  entries,
-  emptyMessage,
-}: {
-  title: string;
-  description: string;
-  entries: { id: string; label: string; value: string }[];
-  emptyMessage: string;
-}) {
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
-      <div className="border-b border-slate-100 px-6 py-4 dark:border-slate-800">
-        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">{title}</h2>
-        <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{description}</p>
-      </div>
-      <div className="px-6 py-4">
-        {entries.length === 0 ? (
-          <p className="text-sm text-slate-500 dark:text-slate-400">{emptyMessage}</p>
+      {/* Vendor snapshot */}
+      <section className="rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4 dark:border-slate-800">
+          <h2 className="text-base font-semibold text-slate-900 dark:text-slate-50">Vendor responses</h2>
+          <Link href={`/rfx/${rfxId}/responses`} className="text-sm font-medium text-indigo-600 hover:underline dark:text-indigo-400">
+            View all →
+          </Link>
+        </div>
+        {responses.length === 0 ? (
+          <div className="px-5 py-4">
+            <EmptyState title="No vendor responses yet" description="Responses will appear here as vendors submit their quotes." />
+          </div>
         ) : (
-          <ul className="flex flex-col gap-3">
-            {entries.map((entry) => (
-              <li key={entry.id} className="text-sm">
-                <span className="font-medium text-slate-900 dark:text-slate-100">{entry.label}: </span>
-                <span className="text-slate-600 dark:text-slate-300">{entry.value}</span>
+          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+            {responses.map((r) => (
+              <li key={r.vendorResponse.id} className="flex items-center justify-between gap-3 px-5 py-3">
+                <div>
+                  <p className="text-sm font-medium text-slate-900 dark:text-slate-100">{r.vendor.name}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {r.stats.mappedLines}/{r.stats.totalLines} lines mapped · {r.stats.openExceptions} open issue{r.stats.openExceptions === 1 ? "" : "s"}
+                  </p>
+                </div>
+                <Badge tone={r.processingStatus === "needs_clarification" ? "amber" : r.processingStatus === "fully_processed" ? "emerald" : "info"}>
+                  {r.processingStatus === "needs_clarification" ? "Needs review" : r.processingStatus === "fully_processed" ? "Validated" : "Processing"}
+                </Badge>
               </li>
             ))}
           </ul>
         )}
-      </div>
-    </section>
+      </section>
+    </div>
+  );
+}
+
+function getNextAction({
+  rfxId,
+  responseCount,
+  openClarifications,
+  blockedLines,
+}: {
+  rfxId: string;
+  responseCount: number;
+  openClarifications: number;
+  blockedLines: number;
+}): { text: string; cta: string; href: string } | undefined {
+  if (responseCount === 0) return undefined;
+  if (openClarifications > 0) {
+    return {
+      text: `${openClarifications} clarification${openClarifications === 1 ? "" : "s"} ${openClarifications === 1 ? "is" : "are"} still open. Resolve them before finalizing the comparison.`,
+      cta: "Review clarifications",
+      href: `/rfx/${rfxId}/clarifications`,
+    };
+  }
+  if (blockedLines > 0) {
+    return {
+      text: `${blockedLines} line${blockedLines === 1 ? "" : "s"} cannot currently be compared. Review what's blocking them.`,
+      cta: "Review comparison",
+      href: `/rfx/${rfxId}/comparison`,
+    };
+  }
+  return { text: "All received lines are validated and ready to compare.", cta: "Compare vendors", href: `/rfx/${rfxId}/comparison` };
+}
+
+function MetricTile({ label, value, tone }: { label: string; value: string; tone?: "amber" | "rose" | "emerald" }) {
+  const toneClass =
+    tone === "amber"
+      ? "text-amber-700 dark:text-amber-400"
+      : tone === "rose"
+        ? "text-rose-700 dark:text-rose-400"
+        : tone === "emerald"
+          ? "text-emerald-700 dark:text-emerald-400"
+          : "text-slate-900 dark:text-slate-50";
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</p>
+      <p className={`mt-1 text-2xl font-semibold ${toneClass}`}>{value}</p>
+    </div>
   );
 }

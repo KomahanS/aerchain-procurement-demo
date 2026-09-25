@@ -9,9 +9,18 @@ const NAV_LINKS = [
   { href: "/analyze-response", label: "Analyze Response" },
 ];
 
+const SECONDARY_LINKS = [{ href: "/settings", label: "Settings" }];
+
 /** Persistent top-level navigation, shared across all buyer pages via the root layout. */
 export function NavHeader() {
   const pathname = usePathname();
+
+  const linkClass = (active: boolean) =>
+    `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+      active
+        ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
+        : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+    }`;
 
   return (
     <header className="border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
@@ -20,19 +29,17 @@ export function NavHeader() {
         {NAV_LINKS.map((link) => {
           const active = link.href === "/" ? pathname === "/" : pathname.startsWith(link.href);
           return (
-            <Link
-              key={link.href}
-              href={link.href}
-              className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-                active
-                  ? "bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300"
-                  : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
-              }`}
-            >
+            <Link key={link.href} href={link.href} className={linkClass(active)}>
               {link.label}
             </Link>
           );
         })}
+        <span className="mx-2 h-4 w-px bg-slate-200 dark:bg-slate-800" aria-hidden />
+        {SECONDARY_LINKS.map((link) => (
+          <Link key={link.href} href={link.href} className={linkClass(pathname.startsWith(link.href))}>
+            {link.label}
+          </Link>
+        ))}
       </nav>
     </header>
   );

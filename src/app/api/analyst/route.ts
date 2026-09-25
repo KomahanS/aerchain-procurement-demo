@@ -14,12 +14,14 @@ function unanswered(): AnalystAnswer {
 export async function POST(request: Request): Promise<NextResponse<{ ok: true; result: AnalystAnswer } | { ok: false; error: string }>> {
   const body = await request.json().catch(() => null);
   const question = typeof body?.question === "string" ? body.question : "";
+  const rfxId = typeof body?.rfxId === "string" ? body.rfxId : undefined;
+  const vendorResponseId = typeof body?.vendorResponseId === "string" ? body.vendorResponseId : undefined;
 
   if (!question.trim()) {
     return NextResponse.json({ ok: false, error: "A question is required." }, { status: 400 });
   }
 
-  const intelligence = getResponseIntelligence();
+  const intelligence = rfxId ? getResponseIntelligence(rfxId, vendorResponseId) : getResponseIntelligence();
   if (!intelligence) {
     return NextResponse.json({ ok: true, result: unanswered() });
   }

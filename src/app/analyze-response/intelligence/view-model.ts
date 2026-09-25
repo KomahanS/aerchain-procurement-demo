@@ -52,11 +52,21 @@ function bucketForLine(line: VendorResponseLineViewModel): ComparabilityBucket {
  * direct read of corrugatedSeed.clarifications (no dedicated accessor
  * exists yet) to attach the already-drafted clarification for each
  * exception. No new/mock domain data is introduced.
+ *
+ * `rfxId`/`vendorResponseId` default to the original single-vendor demo
+ * (rfx-1, its first response) so /analyze-response/intelligence keeps
+ * working unchanged; the RFx workspace's per-vendor Responses view passes
+ * both explicitly.
  */
-export function getResponseIntelligence(): ResponseIntelligenceViewModel | undefined {
-  const rfxId = corrugatedSeed.rfx.id;
+export function getResponseIntelligence(
+  rfxId: string = corrugatedSeed.rfx.id,
+  vendorResponseId?: string,
+): ResponseIntelligenceViewModel | undefined {
   const rfxDetails = getRfxDetails(rfxId);
-  const vendorResponse = getVendorResponseWorkspace(rfxId)[0];
+  const responses = getVendorResponseWorkspace(rfxId);
+  const vendorResponse = vendorResponseId
+    ? responses.find((response) => response.vendorResponse.id === vendorResponseId)
+    : responses[0];
   if (!rfxDetails || !vendorResponse) return undefined;
 
   const lines: ResponseIntelligenceLine[] = vendorResponse.lines.map((line) => ({
